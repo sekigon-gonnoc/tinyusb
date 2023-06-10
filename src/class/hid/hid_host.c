@@ -561,13 +561,29 @@ bool hidh_set_config(uint8_t daddr, uint8_t itf_num)
 
 static void process_set_config(tuh_xfer_t* xfer)
 {
-  // Stall is a valid response for SET_IDLE, sometime SET_PROTOCOL as well
-  // therefore we could ignore its result
-  if ( !(xfer->setup->bRequest == HID_REQ_CONTROL_SET_IDLE ||
-         xfer->setup->bRequest == HID_REQ_CONTROL_SET_PROTOCOL) )
-  {
-    TU_ASSERT(xfer->result == XFER_RESULT_SUCCESS, );
+  // Retry a few times with transfers in enumeration since device can be unstable when starting up
+  enum {
+    ATTEMPT_COUNT_MAX = 10,
+    ATTEMPT_DELAY_MS = 100
+  };
+  static uint8_t failed_count = 0;
+
+  // Stall is a valid response for SET_IDLE, therefore we could ignore its result
+  if (xfer->setup->bRequest != HID_REQ_CONTROL_SET_IDLE) {
+    if (XFER_RESULT_SUCCESS != xfer->result) {
+      // retry if not reaching max attempt
+      if ( failed_count < ATTEMPT_COUNT_MAX ) {
+        failed_count++;
+        osal_task_delay(ATTEMPT_DELAY_MS); // delay a bit
+        TU_LOG1("HID configuration attempt %u\r\n", failed_count);
+        TU_ASSERT(tuh_control_xfer(xfer), );
+      } else {
+        TU_ASSERT(xfer->result == XFER_RESULT_SUCCESS, );
+      }
+      return;
+    } 
   }
+  failed_count = 0;
 
   uintptr_t const state = xfer->user_data;
   uint8_t const itf_num = (uint8_t) tu_le16toh(xfer->setup->wIndex);
